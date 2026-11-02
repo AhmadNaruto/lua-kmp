@@ -23,5 +23,5 @@ SOFTWARE.
 ---
 
 This library bundles the source code of Lua 5.5, which is distributed under
-the MIT license, Copyright (C) 1994-2025 Lua.org, PUC-Rio. See
+the MIT license, Copyright (C) 1994-2026 Lua.org, PUC-Rio. See
 native/lua/LICENSE for the full notice.

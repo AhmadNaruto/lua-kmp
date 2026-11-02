@@ -148,8 +148,7 @@ Using a closed state, or touching it from the wrong thread, throws
 
 ## Lua 5.5 notes for script authors
 
-lua-kmp embeds Lua 5.5 (currently 5.5.0, vendored and pinned by checksum;
-moving to 5.5.1 once it leaves release candidate is tracked as a follow-up).
+lua-kmp embeds Lua 5.5 (currently 5.5.1, vendored and pinned by checksum).
 If your scripts come from 5.4, the main script-facing changes are:
 
 - **Declarations for global variables** — chunks can declare globals
@@ -209,5 +208,5 @@ secret keyring, e.g. `base64 -w0 < secring.gpg`), `SIGNING_IN_MEMORY_KEY_ID`
 
 ## License
 
-MIT. Bundles the Lua 5.5 sources, © 1994–2025 Lua.org, PUC-Rio, also MIT;
+MIT. Bundles the Lua 5.5 sources, © 1994–2026 Lua.org, PUC-Rio, also MIT;
 the Lua copyright notice ships in all distributions (`native/lua/LICENSE`).

@@ -13,8 +13,8 @@
 
 set -euo pipefail
 
-LUA_VERSION="5.5.0"
-LUA_SHA256="57ccc32bbbd005cab75bcc52444052535af691789dba2b9016d5c50640d68b3d"
+LUA_VERSION="5.5.1"
+LUA_SHA256="1c4b4068d67061f2a2231ad2b5422e77acea1487ea9890f6320af614f4373dce"
 
 cd "$(dirname "$0")"
 
