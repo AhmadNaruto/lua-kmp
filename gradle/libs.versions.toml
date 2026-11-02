@@ -1,5 +1,5 @@
 [versions]
-kotlin = "2.4.10"
+kotlin = "2.4.21"
 agp = "9.1.1"
 android-compileSdk = "36"
 # fseeko/ftello (used by Lua's io library) need API 24+ on 32-bit ABIs.
