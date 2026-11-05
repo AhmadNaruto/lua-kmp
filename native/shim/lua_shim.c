@@ -3,6 +3,7 @@
 #include "lua_pcre.h"
 #include "lua_json.h"
 #include "lua_crypto.h"
+#include "lua_utils.h"
 #include <stdlib.h>
 #include <string.h>
 
@@ -25,6 +26,7 @@ void kl_openlibs(lua_State *L, int mask) {
   luaopen_pcre(L);
   luaopen_json(L);
   luaopen_crypto(L);
+  luaopen_utils(L);
 }
 
 int kl_pcall(lua_State *L, int nargs, int nresults) {

@@ -245,6 +245,58 @@ static int l_doc_head(lua_State *L) {
     return 1;
 }
 
+static int l_doc_index(lua_State *L) {
+    lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, 1, NOVELA_DOC_MT);
+    const char *key = luaL_checkstring(L, 2);
+
+    /* 1. Property access */
+    if (strcmp(key, "title") == 0) {
+        return l_doc_title(L);
+    }
+    if (strcmp(key, "body") == 0) {
+        return l_doc_body(L);
+    }
+    if (strcmp(key, "head") == 0) {
+        return l_doc_head(L);
+    }
+    if (strcmp(key, "text") == 0) {
+        lxb_html_body_element_t *body = lxb_html_document_body_element(doc_wrap->doc);
+        lxb_dom_node_t *node = body ? lxb_dom_interface_node(body) : lxb_dom_interface_node(doc_wrap->doc);
+        size_t len = 0;
+        lxb_char_t *text = lxb_dom_node_text_content(node, &len);
+        if (text) {
+            lua_pushlstring(L, (const char *)text, len);
+            lexbor_free(text);
+        } else {
+            lua_pushliteral(L, "");
+        }
+        return 1;
+    }
+    if (strcmp(key, "html") == 0) {
+        lexbor_str_t str;
+        lexbor_str_init(&str, NULL, 512);
+        lxb_status_t status = lxb_html_serialize_deep_str(lxb_dom_interface_node(doc_wrap->doc), &str);
+        if (status == LXB_STATUS_OK && str.data) {
+            lua_pushlstring(L, (const char *)str.data, str.length);
+            lexbor_str_destroy(&str, NULL, false);
+        } else {
+            lua_pushliteral(L, "");
+        }
+        return 1;
+    }
+
+    /* 2. Check methods in NOVELA_DOC_MT */
+    luaL_getmetatable(L, NOVELA_DOC_MT);
+    lua_getfield(L, -1, key);
+    if (!lua_isnil(L, -1)) {
+        return 1;
+    }
+    lua_pop(L, 2);
+
+    lua_pushnil(L);
+    return 1;
+}
+
 /* ── Element Implementation ─────────────────────────────────────────────── */
 
 static void push_element_userdata(lua_State *L, lxb_dom_node_t *node, int doc_ref) {
@@ -529,15 +581,16 @@ static int l_elem_index(lua_State *L) {
     lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_checkudata(L, 1, NOVELA_ELEMENT_MT);
     const char *key = luaL_checkstring(L, 2);
 
-    /* 1. Check if key is a method in NOVELA_ELEMENT_MT */
-    luaL_getmetatable(L, NOVELA_ELEMENT_MT);
-    lua_getfield(L, -1, key);
-    if (!lua_isnil(L, -1)) {
-        return 1; /* Found method */
+    /* 1. Shosetsu / Jsoup Property Aliases */
+    if (strcmp(key, "text") == 0) {
+        return l_elem_text(L);
     }
-    lua_pop(L, 2);
-
-    /* 2. Shosetsu / Jsoup Property Aliases */
+    if (strcmp(key, "html") == 0) {
+        return l_elem_html(L);
+    }
+    if (strcmp(key, "outerHtml") == 0 || strcmp(key, "outer_html") == 0) {
+        return l_elem_outer_html(L);
+    }
     if (strcmp(key, "href") == 0) {
         lua_pushstring(L, "href");
         return l_elem_attr(L);
@@ -554,6 +607,18 @@ static int l_elem_index(lua_State *L) {
         lua_pushstring(L, "class");
         return l_elem_attr(L);
     }
+    if (strcmp(key, "title") == 0) {
+        lua_pushstring(L, "title");
+        return l_elem_attr(L);
+    }
+
+    /* 2. Check if key is a method in NOVELA_ELEMENT_MT */
+    luaL_getmetatable(L, NOVELA_ELEMENT_MT);
+    lua_getfield(L, -1, key);
+    if (!lua_isnil(L, -1)) {
+        return 1; /* Found method */
+    }
+    lua_pop(L, 2);
 
     lua_pushnil(L);
     return 1;
@@ -655,12 +720,236 @@ static int l_elems_for_each(lua_State *L) {
     return 0;
 }
 
+/* ── Global Functional HTML API ─────────────────────────────────────────── */
+
+static int l_global_html_select(lua_State *L) {
+    size_t qlen = 0;
+    const char *query = luaL_checklstring(L, 2, &qlen);
+
+    if (lua_isuserdata(L, 1)) {
+        void *ud = luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
+        if (ud) {
+            lua_lxb_elem_t *elem = (lua_lxb_elem_t *)ud;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, elem->doc_ref);
+            int query_doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, query_doc_ref);
+            lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, -1, NOVELA_DOC_MT);
+            lua_pop(L, 1);
+            return execute_css_query(L, elem->node, doc_wrap, query_doc_ref, query, qlen, false);
+        }
+        ud = luaL_testudata(L, 1, NOVELA_DOC_MT);
+        if (ud) {
+            lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)ud;
+            lua_pushvalue(L, 1);
+            int doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lxb_dom_node_t *root = lxb_dom_interface_node(doc_wrap->doc);
+            return execute_css_query(L, root, doc_wrap, doc_ref, query, qlen, false);
+        }
+    }
+
+    /* Otherwise parse string HTML */
+    size_t hlen = 0;
+    const char *html = luaL_checklstring(L, 1, &hlen);
+    lua_pushcfunction(L, l_html_parse);
+    lua_pushlstring(L, html, hlen);
+    lua_call(L, 1, 1);
+    if (lua_isnil(L, -1)) {
+        create_elements_list(L);
+        return 1;
+    }
+
+    lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, -1, NOVELA_DOC_MT);
+    int doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lxb_dom_node_t *root = lxb_dom_interface_node(doc_wrap->doc);
+    return execute_css_query(L, root, doc_wrap, doc_ref, query, qlen, false);
+}
+
+static int l_global_html_select_first(lua_State *L) {
+    size_t qlen = 0;
+    const char *query = luaL_checklstring(L, 2, &qlen);
+
+    if (lua_isuserdata(L, 1)) {
+        void *ud = luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
+        if (ud) {
+            lua_lxb_elem_t *elem = (lua_lxb_elem_t *)ud;
+            lua_rawgeti(L, LUA_REGISTRYINDEX, elem->doc_ref);
+            int query_doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lua_rawgeti(L, LUA_REGISTRYINDEX, query_doc_ref);
+            lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, -1, NOVELA_DOC_MT);
+            lua_pop(L, 1);
+            return execute_css_query(L, elem->node, doc_wrap, query_doc_ref, query, qlen, true);
+        }
+        ud = luaL_testudata(L, 1, NOVELA_DOC_MT);
+        if (ud) {
+            lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)ud;
+            lua_pushvalue(L, 1);
+            int doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+            lxb_dom_node_t *root = lxb_dom_interface_node(doc_wrap->doc);
+            return execute_css_query(L, root, doc_wrap, doc_ref, query, qlen, true);
+        }
+    }
+
+    size_t hlen = 0;
+    const char *html = luaL_checklstring(L, 1, &hlen);
+    lua_pushcfunction(L, l_html_parse);
+    lua_pushlstring(L, html, hlen);
+    lua_call(L, 1, 1);
+    if (lua_isnil(L, -1)) {
+        lua_pushnil(L);
+        return 1;
+    }
+
+    lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, -1, NOVELA_DOC_MT);
+    int doc_ref = luaL_ref(L, LUA_REGISTRYINDEX);
+    lxb_dom_node_t *root = lxb_dom_interface_node(doc_wrap->doc);
+    return execute_css_query(L, root, doc_wrap, doc_ref, query, qlen, true);
+}
+
+static int l_global_html_attr(lua_State *L) {
+    const char *attr = luaL_checkstring(L, 3);
+
+    lua_pushcfunction(L, l_global_html_select_first);
+    lua_pushvalue(L, 1);
+    lua_pushvalue(L, 2);
+    lua_call(L, 2, 1);
+
+    if (lua_isnil(L, -1)) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
+
+    lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_testudata(L, -1, NOVELA_ELEMENT_MT);
+    if (!elem) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
+
+    lua_pushstring(L, attr);
+    return l_elem_attr(L);
+}
+
+static int l_global_html_text(lua_State *L) {
+    if (lua_isuserdata(L, 1)) {
+        void *ud = luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
+        if (ud) {
+            return l_elem_text(L);
+        }
+    }
+    size_t hlen = 0;
+    const char *html = luaL_checklstring(L, 1, &hlen);
+    lua_pushcfunction(L, l_html_parse);
+    lua_pushlstring(L, html, hlen);
+    lua_call(L, 1, 1);
+    if (lua_isnil(L, -1)) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
+    lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, -1, NOVELA_DOC_MT);
+    lxb_html_body_element_t *body = lxb_html_document_body_element(doc_wrap->doc);
+    lxb_dom_node_t *node = body ? lxb_dom_interface_node(body) : lxb_dom_interface_node(doc_wrap->doc);
+    size_t len = 0;
+    lxb_char_t *text = lxb_dom_node_text_content(node, &len);
+    if (text) {
+        lua_pushlstring(L, (const char *)text, len);
+        lexbor_free(text);
+    } else {
+        lua_pushliteral(L, "");
+    }
+    return 1;
+}
+
+static int l_global_html_remove(lua_State *L) {
+    int n = lua_gettop(L);
+    if (n < 1) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
+
+    if (lua_isuserdata(L, 1)) {
+        void *ud = luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
+        if (ud) {
+            lua_lxb_elem_t *elem = (lua_lxb_elem_t *)ud;
+            for (int i = 2; i <= n; i++) {
+                size_t qlen = 0;
+                const char *query = lua_tolstring(L, i, &qlen);
+                if (query && qlen > 0) {
+                    lua_pushcfunction(L, l_global_html_select);
+                    lua_pushvalue(L, 1);
+                    lua_pushvalue(L, i);
+                    lua_call(L, 2, 1);
+                    int count = (int)luaL_len(L, -1);
+                    for (int j = 1; j <= count; j++) {
+                        lua_rawgeti(L, -1, j);
+                        lua_lxb_elem_t *sub = (lua_lxb_elem_t *)luaL_testudata(L, -1, NOVELA_ELEMENT_MT);
+                        if (sub && sub->node) {
+                            lxb_dom_node_remove(sub->node);
+                        }
+                        lua_pop(L, 1);
+                    }
+                    lua_pop(L, 1);
+                }
+            }
+            return l_elem_html(L);
+        }
+    }
+
+    /* Otherwise string HTML */
+    size_t hlen = 0;
+    const char *html = luaL_checklstring(L, 1, &hlen);
+    lua_pushcfunction(L, l_html_parse);
+    lua_pushlstring(L, html, hlen);
+    lua_call(L, 1, 1);
+    if (lua_isnil(L, -1)) {
+        lua_pushlstring(L, html, hlen);
+        return 1;
+    }
+
+    int doc_idx = lua_gettop(L);
+    lua_lxb_doc_t *doc_wrap = (lua_lxb_doc_t *)luaL_checkudata(L, doc_idx, NOVELA_DOC_MT);
+
+    for (int i = 2; i <= n; i++) {
+        size_t qlen = 0;
+        const char *query = lua_tolstring(L, i, &qlen);
+        if (query && qlen > 0) {
+            lua_pushcfunction(L, l_global_html_select);
+            lua_pushvalue(L, doc_idx);
+            lua_pushvalue(L, i);
+            lua_call(L, 2, 1);
+            int count = (int)luaL_len(L, -1);
+            for (int j = 1; j <= count; j++) {
+                lua_rawgeti(L, -1, j);
+                lua_lxb_elem_t *sub = (lua_lxb_elem_t *)luaL_testudata(L, -1, NOVELA_ELEMENT_MT);
+                if (sub && sub->node) {
+                    lxb_dom_node_remove(sub->node);
+                }
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+    }
+
+    /* Serialize cleaned document body */
+    lxb_html_body_element_t *body = lxb_html_document_body_element(doc_wrap->doc);
+    lxb_dom_node_t *body_node = body ? lxb_dom_interface_node(body) : lxb_dom_interface_node(doc_wrap->doc);
+
+    lexbor_str_t str;
+    lexbor_str_init(&str, NULL, 512);
+    lxb_status_t status = lxb_html_serialize_deep_str(body_node, &str);
+    if (status == LXB_STATUS_OK && str.data) {
+        lua_pushlstring(L, (const char *)str.data, str.length);
+        lexbor_str_destroy(&str, NULL, false);
+    } else {
+        lua_pushliteral(L, "");
+    }
+    return 1;
+}
+
 /* ── Registration ────────────────────────────────────────────────────────── */
 
 int luaopen_html(lua_State *L) {
     /* 1. Document Metatable */
     if (luaL_newmetatable(L, NOVELA_DOC_MT)) {
-        lua_pushvalue(L, -1);
+        lua_pushcfunction(L, l_doc_index);
         lua_setfield(L, -2, "__index");
 
         lua_pushcfunction(L, l_doc_gc);
@@ -796,9 +1085,24 @@ int luaopen_html(lua_State *L) {
     }
     lua_pop(L, 1);
 
-    /* Global html_parse */
+    /* Global HTML functions */
     lua_pushcfunction(L, l_html_parse);
     lua_setglobal(L, "html_parse");
+
+    lua_pushcfunction(L, l_global_html_select);
+    lua_setglobal(L, "html_select");
+
+    lua_pushcfunction(L, l_global_html_select_first);
+    lua_setglobal(L, "html_select_first");
+
+    lua_pushcfunction(L, l_global_html_attr);
+    lua_setglobal(L, "html_attr");
+
+    lua_pushcfunction(L, l_global_html_text);
+    lua_setglobal(L, "html_text");
+
+    lua_pushcfunction(L, l_global_html_remove);
+    lua_setglobal(L, "html_remove");
 
     return 0;
 }

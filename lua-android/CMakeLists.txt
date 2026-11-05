@@ -23,6 +23,7 @@ set(RUNTIME_SOURCES
     ${NATIVE_DIR}/modules/lua_pcre.c
     ${NATIVE_DIR}/modules/lua_json.c
     ${NATIVE_DIR}/modules/lua_crypto.c
+    ${NATIVE_DIR}/modules/lua_utils.c
 )
 
 add_library(luakmp SHARED

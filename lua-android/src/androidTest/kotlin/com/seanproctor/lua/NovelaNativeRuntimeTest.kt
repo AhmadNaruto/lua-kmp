@@ -114,4 +114,87 @@ class NovelaNativeRuntimeTest {
             }
         }
     }
+
+    @Test
+    fun globalHtmlFunctionsAndPropertyAccess() {
+        LuaState().use { lua ->
+            val script = """
+                local html = [[
+                    <div class="col-truyen-main">
+                        <div class="row">
+                            <div class="col-xs-7">
+                                <h3><a href="/book/1.html" class="title-link">  Novel Title  </a></h3>
+                            </div>
+                            <span class="ad-banner">Advertisement</span>
+                        </div>
+                    </div>
+                ]]
+                -- 1. html_select on string
+                local rows = html_select(html, ".col-truyen-main .row")
+                local row = rows:first()
+
+                -- 2. html_select_first on row.html
+                local titleEl = html_select_first(row.html, "h3 > a")
+
+                -- 3. row.text as property AND row:text() as method
+                local textProp = string_clean(titleEl.text)
+                local textMethod = string_clean(titleEl:text())
+
+                -- 4. Attribute access (.href and :attr())
+                local hrefProp = titleEl.href
+                local hrefMethod = titleEl:attr("href")
+
+                -- 5. html_attr global
+                local globalAttr = html_attr(html, "a.title-link", "class")
+
+                -- 6. html_remove
+                local cleaned = html_remove(html, ".ad-banner")
+                local hasAd = string.find(cleaned, "Advertisement") ~= nil
+
+                return textProp, textMethod, hrefProp, hrefMethod, globalAttr, hasAd
+            """.trimIndent()
+
+            val results = lua.eval(script)
+            assertEquals(6, results.size)
+            assertEquals(LuaValue.Str("Novel Title"), results[0])
+            assertEquals(LuaValue.Str("Novel Title"), results[1])
+            assertEquals(LuaValue.Str("/book/1.html"), results[2])
+            assertEquals(LuaValue.Str("/book/1.html"), results[3])
+            assertEquals(LuaValue.Str("title-link"), results[4])
+            assertEquals(LuaValue.Boolean(false), results[5])
+        }
+    }
+
+    @Test
+    fun stringAndUrlUtilities() {
+        LuaState().use { lua ->
+            val script = """
+                local clean = string_clean(" \t Hello \n  world   from \r\n NoveLA  ")
+                local trim = string_trim("   trimmed string   ")
+                local starts = string_starts_with("https://example.com", "https://")
+                local ends = string_ends_with("archive.tar.gz", ".gz")
+                local parts = string_split("one,two,three", ",")
+                local unesc = unescape_unicode("Title:\\u0020\\u004EoveLA")
+                local encoded = url_encode("query test&value=123")
+                local resolvedAbs = url_resolve("https://example.com/dir/page.html", "/root.html")
+                local resolvedRel = url_resolve("https://example.com/dir/page.html", "sub.html")
+                local resolvedProto = url_resolve("https://example.com", "//cdn.example.com/img.jpg")
+
+                return clean, trim, starts, ends, parts[2], unesc, encoded, resolvedAbs, resolvedRel, resolvedProto
+            """.trimIndent()
+
+            val results = lua.eval(script)
+            assertEquals(10, results.size)
+            assertEquals(LuaValue.Str("Hello world from NoveLA"), results[0])
+            assertEquals(LuaValue.Str("trimmed string"), results[1])
+            assertEquals(LuaValue.Boolean(true), results[2])
+            assertEquals(LuaValue.Boolean(true), results[3])
+            assertEquals(LuaValue.Str("two"), results[4])
+            assertEquals(LuaValue.Str("Title: NoveLA"), results[5])
+            assertEquals(LuaValue.Str("query%20test%26value%3D123"), results[6])
+            assertEquals(LuaValue.Str("https://example.com/root.html"), results[7])
+            assertEquals(LuaValue.Str("https://example.com/dir/sub.html"), results[8])
+            assertEquals(LuaValue.Str("https://cdn.example.com/img.jpg"), results[9])
+        }
+    }
 }
