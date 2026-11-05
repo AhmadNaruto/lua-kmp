@@ -5,11 +5,13 @@ import com.seanproctor.lua.internal.LUA_MULTIPLE_RETURNS
 import com.seanproctor.lua.internal.LUA_STATUS_OK
 import com.seanproctor.lua.internal.LUA_TYPE_BOOLEAN
 import com.seanproctor.lua.internal.LUA_TYPE_FUNCTION
+import com.seanproctor.lua.internal.LUA_TYPE_LIGHTUSERDATA
 import com.seanproctor.lua.internal.LUA_TYPE_NIL
 import com.seanproctor.lua.internal.LUA_TYPE_NONE
 import com.seanproctor.lua.internal.LUA_TYPE_NUMBER
 import com.seanproctor.lua.internal.LUA_TYPE_STRING
 import com.seanproctor.lua.internal.LUA_TYPE_TABLE
+import com.seanproctor.lua.internal.LUA_TYPE_USERDATA
 import com.seanproctor.lua.internal.luaErrorFor
 import com.seanproctor.lua.internal.luaTypeName
 import com.seanproctor.lua.internal.toMask
@@ -103,6 +105,12 @@ internal class JniLuaState(config: LuaConfig) : BaseLuaState() {
         return JniFunctionHandle(this, LuaJni.ref(ptr))
     }
 
+    override fun newTable(): LuaValue.Table {
+        checkOpen()
+        LuaJni.newTable(ptr)
+        return JniTableHandle(this, LuaJni.ref(ptr))
+    }
+
     override fun close() {
         if (closed) return
         checkOwnerThread()
@@ -154,6 +162,7 @@ internal class JniLuaState(config: LuaConfig) : BaseLuaState() {
             LuaJni.pushValue(state, idx)
             JniFunctionHandle(this, LuaJni.ref(state))
         }
+        LUA_TYPE_LIGHTUSERDATA, LUA_TYPE_USERDATA -> LuaValue.Userdata(luaTypeName(t))
         else -> throw LuaException("unsupported Lua value of type ${luaTypeName(t)}")
     }
 
@@ -164,6 +173,7 @@ internal class JniLuaState(config: LuaConfig) : BaseLuaState() {
             is LuaValue.Integer -> LuaJni.pushInteger(state, value.value)
             is LuaValue.Number -> LuaJni.pushNumber(state, value.value)
             is LuaValue.Str -> LuaJni.pushString(state, value.value.encodeToByteArray())
+            is LuaValue.Userdata -> LuaJni.pushNil(state)
             is JniTableHandle -> {
                 require(value.owner === this) { "table handle was not created by this LuaState" }
                 LuaJni.getRef(state, value.ref)

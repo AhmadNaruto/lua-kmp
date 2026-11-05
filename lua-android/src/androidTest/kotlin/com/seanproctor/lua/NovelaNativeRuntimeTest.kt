@@ -197,4 +197,41 @@ class NovelaNativeRuntimeTest {
             assertEquals(LuaValue.Str("https://cdn.example.com/img.jpg"), results[9])
         }
     }
+
+    @Test
+    fun bit32CompatibilityAndTableCreation() {
+        LuaState().use { lua ->
+            val script = """
+                local a = bit32.band(3, 5)
+                local b = bit32.bor(3, 5)
+                local c = bit32.bxor(3, 5)
+                local d = bit32.lshift(2, 3)
+                return a, b, c, d
+            """.trimIndent()
+
+            val results = lua.eval(script)
+            assertEquals(listOf(
+                LuaValue.Integer(1),
+                LuaValue.Integer(7),
+                LuaValue.Integer(6),
+                LuaValue.Integer(16)
+            ), results)
+
+            // Test newTable creation from Kotlin
+            val table = lua.newTable()
+            table[LuaValue.Str("status")] = LuaValue.Integer(200)
+            table[LuaValue.Str("success")] = LuaValue.Bool(true)
+            lua.setGlobal("response", table)
+
+            val fromLua = lua.eval("return response.status, response.success")
+            assertEquals(listOf(LuaValue.Integer(200), LuaValue.Bool(true)), fromLua)
+
+            // Test Userdata marshal safety
+            val docUserdata = lua.eval("return html_parse('<div>hello</div>')")
+            assertEquals(1, docUserdata.size)
+            assertIs<LuaValue.Userdata>(docUserdata[0])
+            assertEquals("userdata", (docUserdata[0] as LuaValue.Userdata).typeName)
+        }
+    }
 }
+

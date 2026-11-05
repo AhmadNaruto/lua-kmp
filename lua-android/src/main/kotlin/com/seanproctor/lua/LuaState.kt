@@ -42,6 +42,9 @@ public interface LuaState : AutoCloseable {
 
     /** Wraps a Kotlin function as a [LuaValue.Function] (for putting into tables, returning, etc.). */
     public fun wrap(function: LuaFunction): LuaValue.Function
+
+    /** Creates a new empty Lua table. */
+    public fun newTable(): LuaValue.Table
 }
 
 /** Factory. */

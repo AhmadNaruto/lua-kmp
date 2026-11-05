@@ -37,6 +37,9 @@ public sealed interface LuaValue {
 
     /** Opaque handle to a Lua function living in the registry. */
     public interface Function : LuaValue
+
+    /** Opaque representation of a Lua userdata or lightuserdata value. */
+    public data class Userdata(public val typeName: String = "userdata") : LuaValue
 }
 
 /** SAM for host functions. Receives already-marshalled args; returns values to push back. */

@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdbool.h>
+#include <stdint.h>
 
 /* ── String Helpers ──────────────────────────────────────────────────────── */
 
@@ -342,6 +343,143 @@ static void setup_string_call(lua_State *L) {
     lua_pop(L, 1);
 }
 
+/* ── bit32 Compatibility Module ─────────────────────────────────────────── */
+
+static inline uint32_t check_uint32(lua_State *L, int idx) {
+    lua_Integer n = luaL_checkinteger(L, idx);
+    return (uint32_t)n;
+}
+
+static int l_bit32_band(lua_State *L) {
+    int n = lua_gettop(L);
+    uint32_t r = ~((uint32_t)0);
+    for (int i = 1; i <= n; i++) {
+        r &= check_uint32(L, i);
+    }
+    lua_pushinteger(L, (lua_Integer)r);
+    return 1;
+}
+
+static int l_bit32_bor(lua_State *L) {
+    int n = lua_gettop(L);
+    uint32_t r = 0;
+    for (int i = 1; i <= n; i++) {
+        r |= check_uint32(L, i);
+    }
+    lua_pushinteger(L, (lua_Integer)r);
+    return 1;
+}
+
+static int l_bit32_bxor(lua_State *L) {
+    int n = lua_gettop(L);
+    uint32_t r = 0;
+    for (int i = 1; i <= n; i++) {
+        r ^= check_uint32(L, i);
+    }
+    lua_pushinteger(L, (lua_Integer)r);
+    return 1;
+}
+
+static int l_bit32_bnot(lua_State *L) {
+    uint32_t r = ~check_uint32(L, 1);
+    lua_pushinteger(L, (lua_Integer)r);
+    return 1;
+}
+
+static int l_bit32_btest(lua_State *L) {
+    int n = lua_gettop(L);
+    uint32_t r = ~((uint32_t)0);
+    for (int i = 1; i <= n; i++) {
+        r &= check_uint32(L, i);
+    }
+    lua_pushboolean(L, r != 0);
+    return 1;
+}
+
+static int l_bit32_lshift(lua_State *L) {
+    uint32_t x = check_uint32(L, 1);
+    lua_Integer disp = luaL_checkinteger(L, 2);
+    if (disp < 0) {
+        disp = -disp;
+        x = (disp >= 32) ? 0 : (x >> disp);
+    } else {
+        x = (disp >= 32) ? 0 : (x << disp);
+    }
+    lua_pushinteger(L, (lua_Integer)x);
+    return 1;
+}
+
+static int l_bit32_rshift(lua_State *L) {
+    uint32_t x = check_uint32(L, 1);
+    lua_Integer disp = luaL_checkinteger(L, 2);
+    if (disp < 0) {
+        disp = -disp;
+        x = (disp >= 32) ? 0 : (x << disp);
+    } else {
+        x = (disp >= 32) ? 0 : (x >> disp);
+    }
+    lua_pushinteger(L, (lua_Integer)x);
+    return 1;
+}
+
+static int l_bit32_arshift(lua_State *L) {
+    int32_t x = (int32_t)check_uint32(L, 1);
+    lua_Integer disp = luaL_checkinteger(L, 2);
+    if (disp < 0) {
+        disp = -disp;
+        uint32_t ux = (uint32_t)x;
+        ux = (disp >= 32) ? 0 : (ux << disp);
+        lua_pushinteger(L, (lua_Integer)ux);
+        return 1;
+    }
+    if (disp >= 32) disp = 31;
+    x >>= disp;
+    lua_pushinteger(L, (lua_Integer)(uint32_t)x);
+    return 1;
+}
+
+static int l_bit32_lrotate(lua_State *L) {
+    uint32_t x = check_uint32(L, 1);
+    lua_Integer disp = luaL_checkinteger(L, 2) & 31;
+    x = (x << disp) | (x >> (32 - disp));
+    lua_pushinteger(L, (lua_Integer)x);
+    return 1;
+}
+
+static int l_bit32_rrotate(lua_State *L) {
+    uint32_t x = check_uint32(L, 1);
+    lua_Integer disp = luaL_checkinteger(L, 2) & 31;
+    x = (x >> disp) | (x << (32 - disp));
+    lua_pushinteger(L, (lua_Integer)x);
+    return 1;
+}
+
+static int l_bit32_extract(lua_State *L) {
+    uint32_t n = check_uint32(L, 1);
+    int field = (int)luaL_checkinteger(L, 2);
+    int width = (int)luaL_optinteger(L, 3, 1);
+    if (field < 0 || width <= 0 || field + width > 32) {
+        return luaL_error(L, "trying to access out-of-range bits");
+    }
+    uint32_t mask = (width == 32) ? ~((uint32_t)0) : ((1U << width) - 1);
+    lua_pushinteger(L, (lua_Integer)((n >> field) & mask));
+    return 1;
+}
+
+static int l_bit32_replace(lua_State *L) {
+    uint32_t n = check_uint32(L, 1);
+    uint32_t v = check_uint32(L, 2);
+    int field = (int)luaL_checkinteger(L, 3);
+    int width = (int)luaL_optinteger(L, 4, 1);
+    if (field < 0 || width <= 0 || field + width > 32) {
+        return luaL_error(L, "trying to access out-of-range bits");
+    }
+    uint32_t mask = (width == 32) ? ~((uint32_t)0) : ((1U << width) - 1);
+    n = (n & ~(mask << field)) | ((v & mask) << field);
+    lua_pushinteger(L, (lua_Integer)n);
+    return 1;
+}
+
 /* ── Module Registration ─────────────────────────────────────────────────── */
 
 int luaopen_utils(lua_State *L) {
@@ -375,6 +513,22 @@ int luaopen_utils(lua_State *L) {
 
     lua_pushcfunction(L, l_url_resolve);
     lua_setglobal(L, "url_resolve");
+
+    /* Register bit32 compatibility table */
+    lua_createtable(L, 0, 12);
+    lua_pushcfunction(L, l_bit32_band);    lua_setfield(L, -2, "band");
+    lua_pushcfunction(L, l_bit32_bor);     lua_setfield(L, -2, "bor");
+    lua_pushcfunction(L, l_bit32_bxor);    lua_setfield(L, -2, "bxor");
+    lua_pushcfunction(L, l_bit32_bnot);    lua_setfield(L, -2, "bnot");
+    lua_pushcfunction(L, l_bit32_btest);   lua_setfield(L, -2, "btest");
+    lua_pushcfunction(L, l_bit32_lshift);  lua_setfield(L, -2, "lshift");
+    lua_pushcfunction(L, l_bit32_rshift);  lua_setfield(L, -2, "rshift");
+    lua_pushcfunction(L, l_bit32_arshift); lua_setfield(L, -2, "arshift");
+    lua_pushcfunction(L, l_bit32_lrotate); lua_setfield(L, -2, "lrotate");
+    lua_pushcfunction(L, l_bit32_rrotate); lua_setfield(L, -2, "rrotate");
+    lua_pushcfunction(L, l_bit32_extract); lua_setfield(L, -2, "extract");
+    lua_pushcfunction(L, l_bit32_replace); lua_setfield(L, -2, "replace");
+    lua_setglobal(L, "bit32");
 
     /* Setup string callable metatable */
     setup_string_call(L);

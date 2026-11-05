@@ -192,6 +192,17 @@ do
 
     local resProto = url_resolve("https://example.com", "//cdn.example.com/img.jpg")
     assert_eq("https://cdn.example.com/img.jpg", resProto, "url_resolve protocol relative")
+
+    -- bit32 compatibility tests
+    assert_true(type(bit32) == "table", "bit32 table exists")
+    assert_eq(1, bit32.band(3, 5), "bit32.band")
+    assert_eq(7, bit32.bor(3, 5), "bit32.bor")
+    assert_eq(6, bit32.bxor(3, 5), "bit32.bxor")
+    assert_eq(4294967294, bit32.bnot(1), "bit32.bnot")
+    assert_eq(16, bit32.lshift(2, 3), "bit32.lshift")
+    assert_eq(2, bit32.rshift(16, 3), "bit32.rshift")
+    assert_true(bit32.btest(3, 1), "bit32.btest true")
+    assert_true(not bit32.btest(2, 1), "bit32.btest false")
 end
 
 -- ── 8. Real-world Extension Scenario (AllNovel / Shosetsu emulation) ────────
