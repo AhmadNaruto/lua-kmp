@@ -34,14 +34,32 @@ internal class JniLuaState(config: LuaConfig) : BaseLuaState() {
     override fun eval(code: String, chunkName: String): List<LuaValue> {
         checkOpen()
         val base = LuaJni.getTop(ptr)
-        loadChunk(code, chunkName)
+        loadChunk(code.encodeToByteArray(), chunkName)
         return runPcall(base, nargs = 0)
     }
 
-    override fun load(code: String, chunkName: String): LuaValue.Function {
+    override fun load(code: String, chunkName: String): LuaValue.Function =
+        load(code.encodeToByteArray(), chunkName)
+
+    override fun load(bytes: ByteArray, chunkName: String): LuaValue.Function {
         checkOpen()
-        loadChunk(code, chunkName)
+        loadChunk(bytes, chunkName)
         return JniFunctionHandle(this, LuaJni.ref(ptr))
+    }
+
+    override fun dump(function: LuaValue.Function): ByteArray {
+        checkOpen()
+        val handle = function as? JniFunctionHandle
+        require(handle != null && handle.owner === this) {
+            "function handle was not created by this LuaState"
+        }
+        LuaJni.checkStack(ptr, 2)
+        LuaJni.getRef(ptr, handle.ref)
+        try {
+            return LuaJni.dump(ptr) ?: throw LuaException("lua_dump failed")
+        } finally {
+            LuaJni.setTop(ptr, -2)
+        }
     }
 
     override fun getGlobal(name: String): LuaValue {
@@ -94,8 +112,8 @@ internal class JniLuaState(config: LuaConfig) : BaseLuaState() {
         JniStateRegistry.remove(ptr)
     }
 
-    private fun loadChunk(code: String, chunkName: String) {
-        val status = LuaJni.loadBuffer(ptr, code.encodeToByteArray(), chunkName.encodeToByteArray())
+    private fun loadChunk(bytes: ByteArray, chunkName: String) {
+        val status = LuaJni.loadBuffer(ptr, bytes, chunkName.encodeToByteArray())
         if (status != LUA_STATUS_OK) throwTopError(status)
     }
 

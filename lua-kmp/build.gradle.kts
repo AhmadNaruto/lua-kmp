@@ -103,7 +103,17 @@ kotlin {
         compilations.named("main") {
             cinterops.register("lua") {
                 definitionFile.set(project.file("src/nativeInterop/cinterop/lua.def"))
-                includeDirs(rootProject.file("native/lua/src"), rootProject.file("native/shim"))
+                includeDirs(
+                    rootProject.file("native/lua/src"),
+                    rootProject.file("native/shim"),
+                    rootProject.file("native/modules"),
+                    rootProject.file("native/lexbor/source"),
+                    rootProject.file("native/pcre2/src"),
+                    rootProject.file("native/yyjson"),
+                    rootProject.file("native/crypto/aes"),
+                    rootProject.file("native/crypto/base64"),
+                    rootProject.file("native/crypto/hash"),
+                )
             }
         }
     }
@@ -114,6 +124,11 @@ kotlin {
 tasks.withType<org.jetbrains.kotlin.gradle.tasks.CInteropProcess>().configureEach {
     inputs.dir(rootProject.file("native/lua/src"))
     inputs.dir(rootProject.file("native/shim"))
+    inputs.dir(rootProject.file("native/modules"))
+    inputs.dir(rootProject.file("native/lexbor/source"))
+    inputs.dir(rootProject.file("native/pcre2/src"))
+    inputs.dir(rootProject.file("native/yyjson"))
+    inputs.dir(rootProject.file("native/crypto"))
 }
 
 // ---------------------------------------------------------------------------
@@ -162,11 +177,38 @@ fun javaIncludeDirs(): List<File> {
     return listOf(include, include.resolve(platformDir))
 }
 
-val jniSources = listOf(
-    rootProject.file("native/shim/lua_all.c"),
-    rootProject.file("native/shim/lua_shim.c"),
-    rootProject.file("native/jni/lua_jni.c"),
+val nativeDir = rootProject.file("native")
+val lexborSources = nativeDir.resolve("lexbor/source/lexbor")
+    .walkTopDown()
+    .filter { it.extension == "c" && !it.path.contains(if (hostOs.isWindows) "ports/posix" else "ports/windows_nt") }
+    .toList()
+
+val pcre2Exclude = setOf(
+    "pcre2_fuzzsupport.c", "pcre2_dftables.c", "pcre2_jit_test.c",
+    "pcre2_posix_test.c", "pcre2posix_test.c", "pcre2test.c", "pcre2demo.c",
+    "pcre2grep.c", "pcre2posix.c"
 )
+val pcre2Sources = nativeDir.resolve("pcre2/src")
+    .listFiles { file -> file.extension == "c" && file.name !in pcre2Exclude }
+    ?.toList().orEmpty()
+
+val runtimeSources = listOf(
+    nativeDir.resolve("yyjson/yyjson.c"),
+    nativeDir.resolve("crypto/aes/aes.c"),
+    nativeDir.resolve("crypto/base64/base64.c"),
+    nativeDir.resolve("crypto/hash/md5.c"),
+    nativeDir.resolve("crypto/hash/sha256.c"),
+    nativeDir.resolve("modules/lua_html.c"),
+    nativeDir.resolve("modules/lua_pcre.c"),
+    nativeDir.resolve("modules/lua_json.c"),
+    nativeDir.resolve("modules/lua_crypto.c"),
+)
+
+val jniSources = listOf(
+    nativeDir.resolve("shim/lua_all.c"),
+    nativeDir.resolve("shim/lua_shim.c"),
+    nativeDir.resolve("jni/lua_jni.c"),
+) + lexborSources + pcre2Sources + runtimeSources
 
 val compileJvmJniTasks: List<TaskProvider<Exec>> = jniHostSpecs.map { spec ->
     val taskName = "compileJvmJni" + spec.key.split("-").joinToString("") { part ->
@@ -176,9 +218,14 @@ val compileJvmJniTasks: List<TaskProvider<Exec>> = jniHostSpecs.map { spec ->
         group = "build"
         description = "Compiles the JVM JNI native library for ${spec.key}"
         val outFile = jniStaging.get().dir("native/${spec.key}").file(spec.libName).asFile
-        inputs.dir(rootProject.file("native/lua/src"))
-        inputs.dir(rootProject.file("native/shim"))
-        inputs.dir(rootProject.file("native/jni"))
+        inputs.dir(nativeDir.resolve("lua/src"))
+        inputs.dir(nativeDir.resolve("shim"))
+        inputs.dir(nativeDir.resolve("jni"))
+        inputs.dir(nativeDir.resolve("modules"))
+        inputs.dir(nativeDir.resolve("lexbor/source"))
+        inputs.dir(nativeDir.resolve("pcre2/src"))
+        inputs.dir(nativeDir.resolve("yyjson"))
+        inputs.dir(nativeDir.resolve("crypto"))
         outputs.file(outFile)
         doFirst { outFile.parentFile.mkdirs() }
         val cc = System.getenv("CC") ?: if (hostOs.isWindows) "gcc" else "cc"
@@ -188,8 +235,17 @@ val compileJvmJniTasks: List<TaskProvider<Exec>> = jniHostSpecs.map { spec ->
             add("-std=c99")
             add("-fvisibility=hidden")
             addAll(spec.compilerArgs)
-            add("-I${rootProject.file("native/lua/src").absolutePath}")
-            add("-I${rootProject.file("native/shim").absolutePath}")
+            add("-DHAVE_CONFIG_H")
+            add("-DPCRE2_CODE_UNIT_WIDTH=8")
+            add("-I${nativeDir.resolve("lua/src").absolutePath}")
+            add("-I${nativeDir.resolve("shim").absolutePath}")
+            add("-I${nativeDir.resolve("modules").absolutePath}")
+            add("-I${nativeDir.resolve("lexbor/source").absolutePath}")
+            add("-I${nativeDir.resolve("pcre2/src").absolutePath}")
+            add("-I${nativeDir.resolve("yyjson").absolutePath}")
+            add("-I${nativeDir.resolve("crypto/aes").absolutePath}")
+            add("-I${nativeDir.resolve("crypto/base64").absolutePath}")
+            add("-I${nativeDir.resolve("crypto/hash").absolutePath}")
             javaIncludeDirs().forEach { add("-I${it.absolutePath}") }
             jniSources.forEach { add(it.absolutePath) }
             add("-o")

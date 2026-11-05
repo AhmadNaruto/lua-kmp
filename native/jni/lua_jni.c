@@ -114,11 +114,25 @@ Java_com_seanproctor_lua_LuaJni_loadBuffer(JNIEnv *env, jobject self, jlong stat
     lua_pushliteral(STATE(state), "not enough memory");
     return LUA_ERRMEM;
   }
-  status = luaL_loadbufferx(STATE(state), (const char *)code_buf, code_len,
-                            (const char *)name_buf, "t");
+  status = kl_loadbuffer(STATE(state), (const char *)code_buf, (int)code_len,
+                         (const char *)name_buf);
   free(code_buf);
   free(name_buf);
   return status;
+}
+
+JNIEXPORT jbyteArray JNICALL
+Java_com_seanproctor_lua_LuaJni_dump(JNIEnv *env, jobject self, jlong state) {
+  int len = 0;
+  char *bytes = kl_dump(STATE(state), &len);
+  (void)self;
+  if (bytes == NULL) return NULL;
+  jbyteArray arr = (*env)->NewByteArray(env, len);
+  if (arr != NULL) {
+    (*env)->SetByteArrayRegion(env, arr, 0, len, (const jbyte *)bytes);
+  }
+  free(bytes);
+  return arr;
 }
 
 JNIEXPORT jint JNICALL

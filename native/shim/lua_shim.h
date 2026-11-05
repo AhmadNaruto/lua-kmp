@@ -60,6 +60,7 @@ int         kl_upvalue_int(lua_State *L, int n);
 const char *kl_tolstring(lua_State *L, int idx, int *len_out);
 void        kl_pushlstring(lua_State *L, const char *s, int len);
 int         kl_loadbuffer(lua_State *L, const char *buf, int len, const char *name);
+char       *kl_dump(lua_State *L, int *len_out);
 
 /* Registry references (LUA_REGISTRYINDEX is a macro, so wrap the ref API). */
 int         kl_ref(lua_State *L);

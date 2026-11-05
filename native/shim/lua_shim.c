@@ -1,4 +1,10 @@
 #include "lua_shim.h"
+#include "lua_html.h"
+#include "lua_pcre.h"
+#include "lua_json.h"
+#include "lua_crypto.h"
+#include <stdlib.h>
+#include <string.h>
 
 void kl_openlibs(lua_State *L, int mask) {
   int load = 0;
@@ -13,6 +19,12 @@ void kl_openlibs(lua_State *L, int mask) {
   if (mask & KL_LIB_PACKAGE)   load |= LUA_LOADLIBK;
   if (mask & KL_LIB_DEBUG)     load |= LUA_DBLIBK;
   luaL_openselectedlibs(L, load, 0);
+
+  /* Open NoveLA native modules */
+  luaopen_html(L);
+  luaopen_pcre(L);
+  luaopen_json(L);
+  luaopen_crypto(L);
 }
 
 int kl_pcall(lua_State *L, int nargs, int nresults) {
@@ -40,8 +52,41 @@ void kl_pushlstring(lua_State *L, const char *s, int len) {
 }
 
 int kl_loadbuffer(lua_State *L, const char *buf, int len, const char *name) {
-  /* "t": accept only text chunks; precompiled bytecode is never loaded. */
-  return luaL_loadbufferx(L, buf, (size_t)len, name, "t");
+  /* "bt": accept both text and precompiled binary bytecode chunks (.lbc) */
+  return luaL_loadbufferx(L, buf, (size_t)len, name, "bt");
+}
+
+typedef struct {
+  char  *data;
+  size_t size;
+  size_t capacity;
+} kl_dump_buf_t;
+
+static int kl_dump_writer(lua_State *L, const void *p, size_t sz, void *ud) {
+  (void)L;
+  kl_dump_buf_t *b = (kl_dump_buf_t *)ud;
+  if (b->size + sz > b->capacity) {
+    size_t new_cap = (b->capacity == 0) ? 1024 : b->capacity * 2;
+    while (new_cap < b->size + sz) new_cap *= 2;
+    char *new_data = (char *)realloc(b->data, new_cap);
+    if (!new_data) return 1;
+    b->data = new_data;
+    b->capacity = new_cap;
+  }
+  memcpy(b->data + b->size, p, sz);
+  b->size += sz;
+  return 0;
+}
+
+char *kl_dump(lua_State *L, int *len_out) {
+  kl_dump_buf_t b = {NULL, 0, 0};
+  if (lua_dump(L, kl_dump_writer, &b, 0) == 0) {
+    if (len_out) *len_out = (int)b.size;
+    return b.data;
+  }
+  if (b.data) free(b.data);
+  if (len_out) *len_out = 0;
+  return NULL;
 }
 
 int kl_ref(lua_State *L) {

@@ -46,6 +46,7 @@ internal object LuaJni {
     external fun openLibs(state: Long, mask: Int)
     external fun close(state: Long)
     external fun loadBuffer(state: Long, code: ByteArray, chunkName: ByteArray): Int
+    external fun dump(state: Long): ByteArray?
     external fun pcall(state: Long, nargs: Int, nresults: Int): Int
     external fun getTop(state: Long): Int
     external fun setTop(state: Long, idx: Int)

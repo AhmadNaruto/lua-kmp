@@ -22,6 +22,12 @@ public interface LuaState : AutoCloseable {
     /** Loads a chunk without running it, returning it as a callable [LuaValue.Function]. */
     public fun load(code: String, chunkName: String = "=(load)"): LuaValue.Function
 
+    /** Loads a compiled bytecode or text chunk without running it, returning it as a callable [LuaValue.Function]. */
+    public fun load(bytes: ByteArray, chunkName: String = "=(load)"): LuaValue.Function
+
+    /** Dumps the function as precompiled binary bytecode. */
+    public fun dump(function: LuaValue.Function): ByteArray
+
     /** Reads a global variable. Absent globals come back as [LuaValue.Nil]. */
     public fun getGlobal(name: String): LuaValue
 

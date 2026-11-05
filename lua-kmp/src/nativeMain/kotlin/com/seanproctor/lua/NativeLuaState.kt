@@ -9,6 +9,7 @@ import com.seanproctor.lua.cinterop.LUA_TNONE
 import com.seanproctor.lua.cinterop.LUA_TNUMBER
 import com.seanproctor.lua.cinterop.LUA_TSTRING
 import com.seanproctor.lua.cinterop.LUA_TTABLE
+import com.seanproctor.lua.cinterop.kl_dump
 import com.seanproctor.lua.cinterop.kl_getref
 import com.seanproctor.lua.cinterop.kl_loadbuffer
 import com.seanproctor.lua.cinterop.kl_openlibs
@@ -56,6 +57,8 @@ import kotlinx.cinterop.memScoped
 import kotlinx.cinterop.ptr
 import kotlinx.cinterop.readBytes
 import kotlinx.cinterop.value
+import kotlinx.cinterop.usePinned
+import kotlinx.cinterop.addressOf
 
 internal actual fun createLuaState(config: LuaConfig): LuaState = NativeLuaState(config)
 
@@ -77,14 +80,39 @@ internal class NativeLuaState(config: LuaConfig) : BaseLuaState() {
     override fun eval(code: String, chunkName: String): List<LuaValue> {
         checkOpen()
         val base = lua_gettop(L)
-        loadChunk(code, chunkName)
+        loadChunk(code.encodeToByteArray(), chunkName)
         return runPcall(base, nargs = 0)
     }
 
-    override fun load(code: String, chunkName: String): LuaValue.Function {
+    override fun load(code: String, chunkName: String): LuaValue.Function =
+        load(code.encodeToByteArray(), chunkName)
+
+    override fun load(bytes: ByteArray, chunkName: String): LuaValue.Function {
         checkOpen()
-        loadChunk(code, chunkName)
+        loadChunk(bytes, chunkName)
         return NativeFunctionHandle(this, kl_ref(L))
+    }
+
+    override fun dump(function: LuaValue.Function): ByteArray {
+        checkOpen()
+        val handle = function as? NativeFunctionHandle
+        require(handle != null && handle.owner === this) {
+            "function handle was not created by this LuaState"
+        }
+        lua_checkstack(L, 2)
+        kl_getref(L, handle.ref)
+        try {
+            return memScoped {
+                val lenVar = alloc<IntVar>()
+                val ptr = kl_dump(L, lenVar.ptr) ?: throw LuaException("lua_dump failed")
+                val len = lenVar.value
+                val bytes = ptr.readBytes(len)
+                platform.posix.free(ptr)
+                bytes
+            }
+        } finally {
+            lua_settop(L, -2)
+        }
     }
 
     override fun getGlobal(name: String): LuaValue {
@@ -138,10 +166,14 @@ internal class NativeLuaState(config: LuaConfig) : BaseLuaState() {
         LeakTracker.stateReleased()
     }
 
-    private fun loadChunk(code: String, chunkName: String) {
-        // cinterop passes Kotlin strings to const char* params as UTF-8; the
-        // explicit length must be the UTF-8 byte count, not the char count.
-        val status = kl_loadbuffer(L, code, code.encodeToByteArray().size, chunkName)
+    private fun loadChunk(bytes: ByteArray, chunkName: String) {
+        val status = if (bytes.isEmpty()) {
+            kl_loadbuffer(L, "", 0, chunkName)
+        } else {
+            bytes.usePinned { pinned ->
+                kl_loadbuffer(L, pinned.addressOf(0), bytes.size, chunkName)
+            }
+        }
         if (status != LUA_OK) throwTopError(status)
     }
 
