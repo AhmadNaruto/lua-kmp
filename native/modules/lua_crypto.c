@@ -93,11 +93,14 @@ static int l_aes_decrypt(lua_State *L) {
 
     /* Try Base64 decode if length is multiple of 4 or doesn't match AES block size */
     size_t ct_len = 0;
+    unsigned char stack_ct[1024];
     unsigned char *ct = NULL;
+    int is_heap = 0;
 
     unsigned char *b64_res = base64_decode(raw_data, data_len, &ct_len);
     if (b64_res && ct_len > 0 && ct_len % 16 == 0) {
         ct = b64_res;
+        is_heap = 1;
     } else {
         if (b64_res) free(b64_res);
         if (data_len % 16 != 0) {
@@ -106,10 +109,16 @@ static int l_aes_decrypt(lua_State *L) {
             return 1;
         }
         ct_len = data_len;
-        ct = (unsigned char *)malloc(ct_len);
-        if (!ct) {
-            lua_pushnil(L);
-            return 1;
+        if (ct_len <= sizeof(stack_ct)) {
+            ct = stack_ct;
+            is_heap = 0;
+        } else {
+            ct = (unsigned char *)malloc(ct_len);
+            if (!ct) {
+                lua_pushnil(L);
+                return 1;
+            }
+            is_heap = 1;
         }
         memcpy(ct, raw_data, ct_len);
     }
@@ -134,7 +143,9 @@ static int l_aes_decrypt(lua_State *L) {
     }
 
     lua_pushlstring(L, (const char *)ct, ct_len);
-    free(ct);
+    if (is_heap) {
+        free(ct);
+    }
     return 1;
 }
 

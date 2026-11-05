@@ -44,8 +44,8 @@ static int l_string_clean(lua_State *L) {
         return 1;
     }
 
-    /* Allocate buffer for cleaned string */
-    char *out = (char *)malloc(len + 1);
+    char stack_buf[512];
+    char *out = (len < sizeof(stack_buf)) ? stack_buf : (char *)malloc(len + 1);
     if (!out) {
         return luaL_error(L, "out of memory in string_clean");
     }
@@ -78,7 +78,9 @@ static int l_string_clean(lua_State *L) {
     }
 
     lua_pushlstring(L, out, out_len);
-    free(out);
+    if (out != stack_buf) {
+        free(out);
+    }
     return 1;
 }
 

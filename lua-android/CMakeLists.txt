@@ -54,6 +54,18 @@ target_compile_definitions(luakmp PRIVATE
     PCRE2_CODE_UNIT_WIDTH=8
 )
 
-target_compile_options(luakmp PRIVATE -O2 -fvisibility=hidden)
+target_compile_options(luakmp PRIVATE
+    -O3
+    -fvisibility=hidden
+    -ffunction-sections
+    -fdata-sections
+    -flto
+)
+
+target_link_options(luakmp PRIVATE
+    -Wl,--gc-sections
+    -flto
+)
 
 target_link_libraries(luakmp m dl)
+

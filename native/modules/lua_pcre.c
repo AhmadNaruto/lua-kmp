@@ -6,18 +6,24 @@
 #define PCRE2_CODE_UNIT_WIDTH 8
 #include "pcre2.h"
 
-/*
-** regex_match(text, pattern) -> table of matched substrings
-** Compatible with NoveLA's Regex(pattern).findAll(text).
-*/
-static int l_regex_match(lua_State *L) {
-    size_t text_len = 0, pat_len = 0;
-    const char *text = luaL_checklstring(L, 1, &text_len);
-    const char *pat = luaL_checklstring(L, 2, &pat_len);
+#define REGEX_CACHE_SIZE 32
 
-    lua_newtable(L);
-    if (!text || !pat || pat_len == 0) {
-        return 1;
+typedef struct {
+    char *pattern;
+    size_t pat_len;
+    pcre2_code *code;
+} regex_cache_entry_t;
+
+static regex_cache_entry_t s_regex_cache[REGEX_CACHE_SIZE];
+static int s_cache_head = 0;
+
+static pcre2_code *get_cached_regex(const char *pat, size_t pat_len) {
+    for (int i = 0; i < REGEX_CACHE_SIZE; i++) {
+        if (s_regex_cache[i].code &&
+            s_regex_cache[i].pat_len == pat_len &&
+            memcmp(s_regex_cache[i].pattern, pat, pat_len) == 0) {
+            return s_regex_cache[i].code;
+        }
     }
 
     int errornumber;
@@ -32,13 +38,52 @@ static int l_regex_match(lua_State *L) {
     );
 
     if (!re) {
+        return NULL;
+    }
+
+    int slot = s_cache_head;
+    s_cache_head = (s_cache_head + 1) % REGEX_CACHE_SIZE;
+
+    if (s_regex_cache[slot].code) {
+        pcre2_code_free(s_regex_cache[slot].code);
+        free(s_regex_cache[slot].pattern);
+        s_regex_cache[slot].code = NULL;
+        s_regex_cache[slot].pattern = NULL;
+    }
+
+    s_regex_cache[slot].pattern = (char *)malloc(pat_len + 1);
+    if (s_regex_cache[slot].pattern) {
+        memcpy(s_regex_cache[slot].pattern, pat, pat_len);
+        s_regex_cache[slot].pattern[pat_len] = '\0';
+        s_regex_cache[slot].pat_len = pat_len;
+        s_regex_cache[slot].code = re;
+    }
+
+    return re;
+}
+
+/*
+** regex_match(text, pattern) -> table of matched substrings
+** Compatible with NoveLA's Regex(pattern).findAll(text).
+*/
+static int l_regex_match(lua_State *L) {
+    size_t text_len = 0, pat_len = 0;
+    const char *text = luaL_checklstring(L, 1, &text_len);
+    const char *pat = luaL_checklstring(L, 2, &pat_len);
+
+    lua_newtable(L);
+    if (!text || !pat || pat_len == 0) {
+        return 1;
+    }
+
+    pcre2_code *re = get_cached_regex(pat, pat_len);
+    if (!re) {
         /* On invalid regex, return empty table */
         return 1;
     }
 
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(re, NULL);
     if (!match_data) {
-        pcre2_code_free(re);
         return 1;
     }
 
@@ -69,7 +114,6 @@ static int l_regex_match(lua_State *L) {
     }
 
     pcre2_match_data_free(match_data);
-    pcre2_code_free(re);
     return 1;
 }
 
@@ -88,17 +132,7 @@ static int l_regex_replace(lua_State *L) {
         return 1;
     }
 
-    int errornumber;
-    PCRE2_SIZE erroroffset;
-    pcre2_code *re = pcre2_compile(
-        (PCRE2_SPTR)pat,
-        pat_len,
-        PCRE2_UTF,
-        &errornumber,
-        &erroroffset,
-        NULL
-    );
-
+    pcre2_code *re = get_cached_regex(pat, pat_len);
     if (!re) {
         lua_pushvalue(L, 1);
         return 1;
@@ -106,17 +140,16 @@ static int l_regex_replace(lua_State *L) {
 
     pcre2_match_data *match_data = pcre2_match_data_create_from_pattern(re, NULL);
     if (!match_data) {
-        pcre2_code_free(re);
         lua_pushvalue(L, 1);
         return 1;
     }
 
-    /* Initial output buffer estimation */
+    /* Stack buffer for common replacements, heap for large */
+    char stack_buf[512];
     size_t out_cap = text_len * 2 + repl_len + 64;
-    char *out_buf = (char *)malloc(out_cap);
+    char *out_buf = (out_cap <= sizeof(stack_buf)) ? stack_buf : (char *)malloc(out_cap);
     if (!out_buf) {
         pcre2_match_data_free(match_data);
-        pcre2_code_free(re);
         lua_pushvalue(L, 1);
         return 1;
     }
@@ -138,7 +171,7 @@ static int l_regex_replace(lua_State *L) {
 
     if (rc == PCRE2_ERROR_NOMEMORY) {
         /* Buffer was too small, out_len has required size */
-        free(out_buf);
+        if (out_buf != stack_buf) free(out_buf);
         out_cap = out_len;
         out_buf = (char *)malloc(out_cap);
         if (out_buf) {
@@ -164,9 +197,8 @@ static int l_regex_replace(lua_State *L) {
         lua_pushvalue(L, 1);
     }
 
-    if (out_buf) free(out_buf);
+    if (out_buf && out_buf != stack_buf) free(out_buf);
     pcre2_match_data_free(match_data);
-    pcre2_code_free(re);
     return 1;
 }
 

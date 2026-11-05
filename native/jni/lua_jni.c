@@ -63,16 +63,23 @@ JNIEXPORT jint JNICALL JNI_OnLoad(JavaVM *vm, void *reserved) {
   return JNI_VERSION_1_6;
 }
 
-/* Copies a jbyteArray into a NUL-terminated malloc'd buffer. */
-static unsigned char *copy_bytes(JNIEnv *env, jbyteArray arr, size_t *len_out) {
+/* Helper for identifier strings (globals, chunk names, etc) which are usually short and need NUL termination */
+static inline int get_ident_string(JNIEnv *env, jbyteArray arr, char *stack_buf, size_t stack_buf_size, char **out_ptr, size_t *out_len) {
+  if (arr == NULL) return 0;
   jsize len = (*env)->GetArrayLength(env, arr);
-  unsigned char *buf = (unsigned char *)malloc((size_t)len + 1);
-  if (buf == NULL)
-    return NULL;
-  (*env)->GetByteArrayRegion(env, arr, 0, len, (jbyte *)buf);
-  buf[len] = '\0';
-  *len_out = (size_t)len;
-  return buf;
+  *out_len = (size_t)len;
+  if ((size_t)len < stack_buf_size) {
+    (*env)->GetByteArrayRegion(env, arr, 0, len, (jbyte *)stack_buf);
+    stack_buf[len] = '\0';
+    *out_ptr = stack_buf;
+    return 1;
+  }
+  char *heap = (char *)malloc((size_t)len + 1);
+  if (heap == NULL) return 0;
+  (*env)->GetByteArrayRegion(env, arr, 0, len, (jbyte *)heap);
+  heap[len] = '\0';
+  *out_ptr = heap;
+  return 2; /* 2 indicates heap allocated, caller must free */
 }
 
 JNIEXPORT jlong JNICALL
@@ -102,22 +109,41 @@ Java_com_seanproctor_lua_LuaJni_close(JNIEnv *env, jobject self, jlong state) {
 JNIEXPORT jint JNICALL
 Java_com_seanproctor_lua_LuaJni_loadBuffer(JNIEnv *env, jobject self, jlong state,
                                            jbyteArray code, jbyteArray chunkName) {
-  size_t code_len = 0, name_len = 0;
-  unsigned char *code_buf, *name_buf;
-  int status;
   (void)self;
-  code_buf = copy_bytes(env, code, &code_len);
-  name_buf = copy_bytes(env, chunkName, &name_len);
-  if (code_buf == NULL || name_buf == NULL) {
-    free(code_buf);
-    free(name_buf);
-    lua_pushliteral(STATE(state), "not enough memory");
+  if (code == NULL) {
+    lua_pushliteral(STATE(state), "null code buffer");
     return LUA_ERRMEM;
   }
-  status = kl_loadbuffer(STATE(state), (const char *)code_buf, (int)code_len,
-                         (const char *)name_buf);
-  free(code_buf);
-  free(name_buf);
+
+  char name_buf[256];
+  char *name_str = NULL;
+  size_t name_len = 0;
+  int name_alloc = get_ident_string(env, chunkName, name_buf, sizeof(name_buf), &name_str, &name_len);
+  const char *final_name = name_alloc ? name_str : "";
+
+  jsize code_len = (*env)->GetArrayLength(env, code);
+  int status;
+
+  /* Zero-copy critical pin to avoid intermediate malloc/memcpy of large Lua code */
+  void *code_ptr = (*env)->GetPrimitiveArrayCritical(env, code, NULL);
+  if (code_ptr != NULL) {
+    status = kl_loadbuffer(STATE(state), (const char *)code_ptr, (int)code_len, final_name);
+    (*env)->ReleasePrimitiveArrayCritical(env, code, code_ptr, JNI_ABORT);
+  } else {
+    /* Fallback if critical section unavailable */
+    jbyte *elems = (*env)->GetByteArrayElements(env, code, NULL);
+    if (elems != NULL) {
+      status = kl_loadbuffer(STATE(state), (const char *)elems, (int)code_len, final_name);
+      (*env)->ReleaseByteArrayElements(env, code, elems, JNI_ABORT);
+    } else {
+      lua_pushliteral(STATE(state), "not enough memory");
+      status = LUA_ERRMEM;
+    }
+  }
+
+  if (name_alloc == 2) {
+    free(name_str);
+  }
   return status;
 }
 
@@ -186,16 +212,36 @@ Java_com_seanproctor_lua_LuaJni_pushNumber(JNIEnv *env, jobject self, jlong stat
 
 JNIEXPORT void JNICALL
 Java_com_seanproctor_lua_LuaJni_pushString(JNIEnv *env, jobject self, jlong state, jbyteArray bytes) {
-  size_t len = 0;
-  unsigned char *buf;
   (void)self;
-  buf = copy_bytes(env, bytes, &len);
-  if (buf == NULL) {
+  if (bytes == NULL) {
+    lua_pushnil(STATE(state));
+    return;
+  }
+  jsize len = (*env)->GetArrayLength(env, bytes);
+  if (len == 0) {
     lua_pushliteral(STATE(state), "");
     return;
   }
-  lua_pushlstring(STATE(state), (const char *)buf, len);
-  free(buf);
+  if (len < 256) {
+    char stack_buf[256];
+    (*env)->GetByteArrayRegion(env, bytes, 0, len, (jbyte *)stack_buf);
+    lua_pushlstring(STATE(state), stack_buf, (size_t)len);
+  } else {
+    /* Large string / HTML / response body: pin directly in JVM heap without intermediate malloc */
+    void *ptr = (*env)->GetPrimitiveArrayCritical(env, bytes, NULL);
+    if (ptr != NULL) {
+      lua_pushlstring(STATE(state), (const char *)ptr, (size_t)len);
+      (*env)->ReleasePrimitiveArrayCritical(env, bytes, ptr, JNI_ABORT);
+    } else {
+      jbyte *elems = (*env)->GetByteArrayElements(env, bytes, NULL);
+      if (elems != NULL) {
+        lua_pushlstring(STATE(state), (const char *)elems, (size_t)len);
+        (*env)->ReleaseByteArrayElements(env, bytes, elems, JNI_ABORT);
+      } else {
+        lua_pushliteral(STATE(state), "");
+      }
+    }
+  }
 }
 
 JNIEXPORT void JNICALL
@@ -269,32 +315,38 @@ Java_com_seanproctor_lua_LuaJni_next(JNIEnv *env, jobject self, jlong state, jin
 
 JNIEXPORT jint JNICALL
 Java_com_seanproctor_lua_LuaJni_getGlobal(JNIEnv *env, jobject self, jlong state, jbyteArray name) {
+  char stack_buf[128];
+  char *name_str = NULL;
   size_t len = 0;
-  unsigned char *buf;
   int type;
   (void)self;
-  buf = copy_bytes(env, name, &len);
-  if (buf == NULL) {
+  int alloc = get_ident_string(env, name, stack_buf, sizeof(stack_buf), &name_str, &len);
+  if (!alloc) {
     lua_pushnil(STATE(state));
     return LUA_TNIL;
   }
-  type = lua_getglobal(STATE(state), (const char *)buf);
-  free(buf);
+  type = lua_getglobal(STATE(state), name_str);
+  if (alloc == 2) {
+    free(name_str);
+  }
   return type;
 }
 
 JNIEXPORT void JNICALL
 Java_com_seanproctor_lua_LuaJni_setGlobal(JNIEnv *env, jobject self, jlong state, jbyteArray name) {
+  char stack_buf[128];
+  char *name_str = NULL;
   size_t len = 0;
-  unsigned char *buf;
   (void)self;
-  buf = copy_bytes(env, name, &len);
-  if (buf == NULL) {
+  int alloc = get_ident_string(env, name, stack_buf, sizeof(stack_buf), &name_str, &len);
+  if (!alloc) {
     lua_pop(STATE(state), 1);
     return;
   }
-  lua_setglobal(STATE(state), (const char *)buf);
-  free(buf);
+  lua_setglobal(STATE(state), name_str);
+  if (alloc == 2) {
+    free(name_str);
+  }
 }
 
 JNIEXPORT jint JNICALL
