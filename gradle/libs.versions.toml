@@ -2,7 +2,7 @@
 kotlin = "2.4.21"
 agp = "9.5.0"
 android-compileSdk = "37"
-android-minSdk = "24"
+android-minSdk = "26"
 androidx-test-runner = "1.7.0"
 maven-publish = "0.37.0"
 
@@ -10,6 +10,5 @@ maven-publish = "0.37.0"
 androidx-test-runner = { module = "androidx.test:runner", version.ref = "androidx-test-runner" }
 
 [plugins]
-kotlinAndroid = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 androidLibrary = { id = "com.android.library", version.ref = "agp" }
 mavenPublish = { id = "com.vanniktech.maven.publish", version.ref = "maven-publish" }

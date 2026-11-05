@@ -1,6 +1,5 @@
 plugins {
     alias(libs.plugins.androidLibrary)
-    alias(libs.plugins.kotlinAndroid)
     alias(libs.plugins.mavenPublish)
 }
 
@@ -32,8 +31,8 @@ android {
     }
 
     compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_11
-        targetCompatibility = JavaVersion.VERSION_11
+        sourceCompatibility = JavaVersion.VERSION_21
+        targetCompatibility = JavaVersion.VERSION_21
     }
 
     buildTypes {
@@ -47,16 +46,9 @@ android {
     }
 }
 
-kotlin {
-    explicitApi()
-    compilerOptions {
-        jvmTarget.set(org.jetbrains.kotlin.gradle.dsl.JvmTarget.JVM_11)
-    }
-}
-
 dependencies {
     androidTestImplementation(libs.androidx.test.runner)
-    androidTestImplementation(kotlin("test"))
+    androidTestImplementation("org.jetbrains.kotlin:kotlin-test")
 }
 
 mavenPublishing {
