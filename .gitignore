@@ -6,3 +6,5 @@ build/
 local.properties
 .DS_Store
 .cxx/
+native/tests/.build_cache/
+native/tests/test_runner_bin

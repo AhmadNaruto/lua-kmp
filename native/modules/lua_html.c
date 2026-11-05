@@ -124,7 +124,7 @@ static int execute_css_query(lua_State *L, lxb_dom_node_t *root_node,
         }
     }
 
-    lxb_css_selector_list_destroy_memory(list);
+    lxb_css_parser_erase(doc_wrap->css_parser);
     return 1;
 }
 
@@ -172,6 +172,10 @@ static int l_doc_gc(lua_State *L) {
             doc_wrap->selectors = NULL;
         }
         if (doc_wrap->css_parser) {
+            if (doc_wrap->css_parser->memory) {
+                lxb_css_memory_destroy(doc_wrap->css_parser->memory, true);
+                doc_wrap->css_parser->memory = NULL;
+            }
             lxb_css_parser_destroy(doc_wrap->css_parser, true);
             doc_wrap->css_parser = NULL;
         }
@@ -266,19 +270,18 @@ static int l_doc_index(lua_State *L) {
         lxb_char_t *text = lxb_dom_node_text_content(node, &len);
         if (text) {
             lua_pushlstring(L, (const char *)text, len);
-            lexbor_free(text);
+            lxb_dom_document_destroy_text(&doc_wrap->doc->dom_document, text);
         } else {
             lua_pushliteral(L, "");
         }
         return 1;
     }
     if (strcmp(key, "html") == 0) {
-        lexbor_str_t str;
-        lexbor_str_init(&str, NULL, 512);
+        lexbor_str_t str = {0};
         lxb_status_t status = lxb_html_serialize_deep_str(lxb_dom_interface_node(doc_wrap->doc), &str);
         if (status == LXB_STATUS_OK && str.data) {
             lua_pushlstring(L, (const char *)str.data, str.length);
-            lexbor_str_destroy(&str, NULL, false);
+            lexbor_str_destroy(&str, doc_wrap->doc->dom_document.text, false);
         } else {
             lua_pushliteral(L, "");
         }
@@ -347,7 +350,7 @@ static int l_elem_text(lua_State *L) {
     lxb_char_t *text = lxb_dom_node_text_content(elem->node, &len);
     if (text) {
         lua_pushlstring(L, (const char *)text, len);
-        lexbor_free(text);
+        lxb_dom_document_destroy_text(elem->node->owner_document, text);
     } else {
         lua_pushliteral(L, "");
     }
@@ -356,42 +359,39 @@ static int l_elem_text(lua_State *L) {
 
 static int l_elem_own_text(lua_State *L) {
     lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_checkudata(L, 1, NOVELA_ELEMENT_MT);
-    /* Concatenate only direct TEXT child nodes */
-    lexbor_str_t str;
-    lexbor_str_init(&str, NULL, 64);
+    luaL_Buffer b;
+    luaL_buffinit(L, &b);
 
-    lxb_dom_node_t *child = elem->node->first_child;
+    lxb_dom_node_t *child = elem->node ? elem->node->first_child : NULL;
     while (child) {
         if (child->type == LXB_DOM_NODE_TYPE_TEXT) {
             size_t tlen = 0;
             lxb_char_t *text = lxb_dom_node_text_content(child, &tlen);
             if (text && tlen > 0) {
-                lexbor_str_append(&str, NULL, text, tlen);
-                lexbor_free(text);
+                luaL_addlstring(&b, (const char *)text, tlen);
+                lxb_dom_document_destroy_text(child->owner_document, text);
             }
         }
         child = child->next;
     }
 
-    if (str.data && str.length > 0) {
-        lua_pushlstring(L, (const char *)str.data, str.length);
-        lexbor_str_destroy(&str, NULL, false);
-    } else {
-        lua_pushliteral(L, "");
-    }
+    luaL_pushresult(&b);
     return 1;
 }
 
 static int l_elem_html(lua_State *L) {
     lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_checkudata(L, 1, NOVELA_ELEMENT_MT);
-    lexbor_str_t str;
-    lexbor_str_init(&str, NULL, 128);
+    if (!elem || !elem->node) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
 
+    lexbor_str_t str = {0};
     /* Inner HTML: serialize children */
-    lxb_status_t status = lxb_html_serialize_tree_str(elem->node, &str);
+    lxb_status_t status = lxb_html_serialize_deep_str(elem->node, &str);
     if (status == LXB_STATUS_OK && str.data) {
         lua_pushlstring(L, (const char *)str.data, str.length);
-        lexbor_str_destroy(&str, NULL, false);
+        lexbor_str_destroy(&str, elem->node->owner_document->text, false);
     } else {
         lua_pushliteral(L, "");
     }
@@ -400,14 +400,17 @@ static int l_elem_html(lua_State *L) {
 
 static int l_elem_outer_html(lua_State *L) {
     lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_checkudata(L, 1, NOVELA_ELEMENT_MT);
-    lexbor_str_t str;
-    lexbor_str_init(&str, NULL, 128);
+    if (!elem || !elem->node) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
 
+    lexbor_str_t str = {0};
     /* Outer HTML: serialize node and descendants */
-    lxb_status_t status = lxb_html_serialize_deep_str(elem->node, &str);
+    lxb_status_t status = lxb_html_serialize_str(elem->node, &str);
     if (status == LXB_STATUS_OK && str.data) {
         lua_pushlstring(L, (const char *)str.data, str.length);
-        lexbor_str_destroy(&str, NULL, false);
+        lexbor_str_destroy(&str, elem->node->owner_document->text, false);
     } else {
         lua_pushliteral(L, "");
     }
@@ -696,7 +699,7 @@ static int l_elems_text(lua_State *L) {
                 if (text && tlen > 0) {
                     if (i > 1) luaL_addchar(&b, ' ');
                     luaL_addlstring(&b, (const char *)text, tlen);
-                    lexbor_free(text);
+                    lxb_dom_document_destroy_text(elem->node->owner_document, text);
                 }
             }
         }
@@ -806,29 +809,60 @@ static int l_global_html_select_first(lua_State *L) {
 }
 
 static int l_global_html_attr(lua_State *L) {
-    const char *attr = luaL_checkstring(L, 3);
-
-    lua_pushcfunction(L, l_global_html_select_first);
-    lua_pushvalue(L, 1);
-    lua_pushvalue(L, 2);
-    lua_call(L, 2, 1);
-
-    if (lua_isnil(L, -1)) {
+    int n = lua_gettop(L);
+    if (n < 2) {
         lua_pushliteral(L, "");
         return 1;
     }
 
-    lua_lxb_elem_t *elem = (lua_lxb_elem_t *)luaL_testudata(L, -1, NOVELA_ELEMENT_MT);
-    if (!elem) {
+    lua_lxb_elem_t *elem = NULL;
+    const char *attr_name = NULL;
+    size_t attr_len = 0;
+
+    if (n == 2) {
+        /* html_attr(element, attr_name) */
+        elem = (lua_lxb_elem_t *)luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
+        attr_name = luaL_checklstring(L, 2, &attr_len);
+    } else {
+        /* html_attr(html_or_element, selector, attr_name) */
+        attr_name = luaL_checklstring(L, 3, &attr_len);
+        lua_pushcfunction(L, l_global_html_select_first);
+        lua_pushvalue(L, 1);
+        lua_pushvalue(L, 2);
+        lua_call(L, 2, 1);
+
+        if (lua_isnil(L, -1)) {
+            lua_pushliteral(L, "");
+            return 1;
+        }
+        elem = (lua_lxb_elem_t *)luaL_testudata(L, -1, NOVELA_ELEMENT_MT);
+    }
+
+    if (!elem || !elem->node || elem->node->type != LXB_DOM_NODE_TYPE_ELEMENT) {
         lua_pushliteral(L, "");
         return 1;
     }
 
-    lua_pushstring(L, attr);
-    return l_elem_attr(L);
+    lxb_dom_element_t *el = lxb_dom_interface_element(elem->node);
+    lxb_dom_attr_t *attr = lxb_dom_element_attr_by_name(el, (const lxb_char_t *)attr_name, attr_len);
+    if (attr) {
+        size_t vlen = 0;
+        const lxb_char_t *val = lxb_dom_attr_value(attr, &vlen);
+        if (val) {
+            lua_pushlstring(L, (const char *)val, vlen);
+            return 1;
+        }
+    }
+
+    lua_pushliteral(L, "");
+    return 1;
 }
 
 static int l_global_html_text(lua_State *L) {
+    if (lua_isnoneornil(L, 1)) {
+        lua_pushliteral(L, "");
+        return 1;
+    }
     if (lua_isuserdata(L, 1)) {
         void *ud = luaL_testudata(L, 1, NOVELA_ELEMENT_MT);
         if (ud) {
@@ -851,7 +885,7 @@ static int l_global_html_text(lua_State *L) {
     lxb_char_t *text = lxb_dom_node_text_content(node, &len);
     if (text) {
         lua_pushlstring(L, (const char *)text, len);
-        lexbor_free(text);
+        lxb_dom_document_destroy_text(node->owner_document, text);
     } else {
         lua_pushliteral(L, "");
     }
@@ -932,12 +966,11 @@ static int l_global_html_remove(lua_State *L) {
     lxb_html_body_element_t *body = lxb_html_document_body_element(doc_wrap->doc);
     lxb_dom_node_t *body_node = body ? lxb_dom_interface_node(body) : lxb_dom_interface_node(doc_wrap->doc);
 
-    lexbor_str_t str;
-    lexbor_str_init(&str, NULL, 512);
+    lexbor_str_t str = {0};
     lxb_status_t status = lxb_html_serialize_deep_str(body_node, &str);
     if (status == LXB_STATUS_OK && str.data) {
         lua_pushlstring(L, (const char *)str.data, str.length);
-        lexbor_str_destroy(&str, NULL, false);
+        lexbor_str_destroy(&str, doc_wrap->doc->dom_document.text, false);
     } else {
         lua_pushliteral(L, "");
     }

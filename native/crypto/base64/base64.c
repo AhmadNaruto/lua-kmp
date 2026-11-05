@@ -14,20 +14,21 @@ char *base64_encode(const unsigned char *src, size_t len, size_t *out_len) {
 
     size_t i = 0, j = 0;
     while (i < len) {
-        uint32_t octet_a = i < len ? src[i++] : 0;
-        uint32_t octet_b = i < len ? src[i++] : 0;
-        uint32_t octet_c = i < len ? src[i++] : 0;
+        size_t rem = len - i;
+        uint32_t octet_a = src[i++];
+        uint32_t octet_b = (rem > 1) ? src[i++] : 0;
+        uint32_t octet_c = (rem > 2) ? src[i++] : 0;
 
-        uint32_t triple = (octet_a << 16) + (octet_b << 8) + octet_c;
+        uint32_t triple = (octet_a << 16) | (octet_b << 8) | octet_c;
 
         out[j++] = b64_table[(triple >> 18) & 0x3F];
         out[j++] = b64_table[(triple >> 12) & 0x3F];
-        out[j++] = (i > len + 1) ? '=' : b64_table[(triple >> 6) & 0x3F];
-        out[j++] = (i > len) ? '=' : b64_table[triple & 0x3F];
+        out[j++] = (rem > 1) ? b64_table[(triple >> 6) & 0x3F] : '=';
+        out[j++] = (rem > 2) ? b64_table[triple & 0x3F] : '=';
     }
 
-    out[olen] = '\0';
-    if (out_len) *out_len = olen;
+    out[j] = '\0';
+    if (out_len) *out_len = j;
     return out;
 }
 
