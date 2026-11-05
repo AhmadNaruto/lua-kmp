@@ -38,4 +38,19 @@ curl -fsSL -o crypto/aes/aes.h https://raw.githubusercontent.com/kokke/tiny-AES-
 curl -fsSL -o crypto/aes/aes.c https://raw.githubusercontent.com/kokke/tiny-AES-c/master/aes.c
 echo "tiny-aes-c vendored into $(pwd)/crypto/aes"
 
+echo "=== 4. Vendoring PCRE2 10.49 ==="
+PCRE2_VERSION="10.49"
+curl -fsSL -o "$workdir/pcre2.tar.gz" "https://github.com/PCRE2Project/pcre2/releases/download/pcre2-$PCRE2_VERSION/pcre2-$PCRE2_VERSION.tar.gz"
+tar -xzf "$workdir/pcre2.tar.gz" -C "$workdir"
+rm -rf pcre2/src pcre2/LICENCE.md
+mkdir -p pcre2/src
+cp "$workdir/pcre2-$PCRE2_VERSION/src/"*.c "$workdir/pcre2-$PCRE2_VERSION/src/"*.h pcre2/src/
+cp "$workdir/pcre2-$PCRE2_VERSION/src/config.h.generic" pcre2/src/config.h
+cp "$workdir/pcre2-$PCRE2_VERSION/src/pcre2.h.generic" pcre2/src/pcre2.h
+cp "$workdir/pcre2-$PCRE2_VERSION/src/pcre2_chartables.c.dist" pcre2/src/pcre2_chartables.c
+cp "$workdir/pcre2-$PCRE2_VERSION/LICENCE.md" pcre2/LICENCE.md
+echo "$PCRE2_VERSION" > pcre2/VERSION
+echo "PCRE2 $PCRE2_VERSION vendored into $(pwd)/pcre2"
+
 echo "=== Native runtime libraries successfully vendored ==="
+
